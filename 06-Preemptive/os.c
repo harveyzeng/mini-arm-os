@@ -2,7 +2,8 @@
 #include <stdint.h>
 #include "reg.h"
 #include "asm.h"
-
+#include <string.h>
+#include <stdarg.h>
 /* Size of our user task stacks in words */
 #define STACK_SIZE	256
 
@@ -14,7 +15,8 @@
  * set when that data is transferred to the TDR
  */
 #define USART_FLAG_TXE	((uint16_t) 0x0080)
-
+int task_number=0;
+void print_tick(int);
 void usart_init(void)
 {
 	*(RCC_APB2ENR) |= (uint32_t) (0x00000001 | 0x00000004);
@@ -63,19 +65,22 @@ void delay(int count)
  * works correctly.
  * http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0552a/Babefdjc.html
  */
-unsigned int *create_task(unsigned int *stack, void (*start)(void))
+unsigned int *create_task(unsigned int *stack, void (*start)(void),int priority)
 {
 	static int first = 1;
 
-	stack += STACK_SIZE - 32; /* End of stack, minus what we are about to push */
+	stack += STACK_SIZE - 34; /* End of stack, minus what we are about to push */
 	if (first) {
 		stack[8] = (unsigned int) start;
+		stack[9]=priority;
 		first = 0;
 	} else {
 		stack[8] = (unsigned int) THREAD_PSP;
-		stack[15] = (unsigned int) start;
+		stack[15] = (unsigned int) start;	
 		stack[16] = (unsigned int) 0x01000000; /* PSR Thumb bit */
+		stack[17]=priority;
 	}
+	task_number++;
 	stack = activate(stack);
 
 	return stack;
@@ -87,6 +92,7 @@ void task1_func(void)
 	print_str("task1: Now, return to kernel mode\n");
 	syscall();
 	while (1) {
+		print_tick(*SYSTICK_VAL);
 		print_str("task1: Running...\n");
 		delay(1000);
 	}
@@ -98,8 +104,20 @@ void task2_func(void)
 	print_str("task2: Now, return to kernel mode\n");
 	syscall();
 	while (1) {
+		print_tick(*SYSTICK_VAL);
 		print_str("task2: Running...\n");
 		delay(1000);
+	}
+}
+void task3_func(void)
+{
+	print_str("task3: Created!\n");
+	print_str("task3: Now, return to kernel mode\n");
+	syscall();
+	while (1) {
+		print_tick(*SYSTICK_VAL);
+		print_str("task3: Running...\n");
+		delay(600);
 	}
 }
 
@@ -108,33 +126,66 @@ int main(void)
 	unsigned int user_stacks[TASK_LIMIT][STACK_SIZE];
 	unsigned int *usertasks[TASK_LIMIT];
 	size_t task_count = 0;
-	size_t current_task;
+	//size_t current_task;
 
 	usart_init();
 
 	print_str("OS: Starting...\n");
 	print_str("OS: First create task 1\n");
-	usertasks[0] = create_task(user_stacks[0], &task1_func);
+	usertasks[0] = create_task(user_stacks[0], &task1_func,3);
 	task_count += 1;
 	print_str("OS: Back to OS, create task 2\n");
-	usertasks[1] = create_task(user_stacks[1], &task2_func);
+	usertasks[1] = create_task(user_stacks[1], &task2_func,2);
 	task_count += 1;
+	print_str("OS: Back to OS, create task 3\n");
+	usertasks[2] = create_task(user_stacks[2], &task3_func,5);
+	task_count += 1;
+	print_str("\nOS: Start priority based scheduler!\n");
 
-	print_str("\nOS: Start round-robin scheduler!\n");
-
+print_tick((unsigned int) usertasks[1]);
 	/* SysTick configuration */
-	*SYSTICK_LOAD = 7200000;
-	*SYSTICK_VAL = 0;
+	*SYSTICK_LOAD = 720000;
+	*SYSTICK_VAL = 720000;
 	*SYSTICK_CTRL = 0x07;
-	current_task = 0;
+	//current_task = 0;
 
 	while (1) {
+	print_tick(*SYSTICK_VAL);
 		print_str("OS: Activate next task\n");
-		usertasks[current_task] = activate(usertasks[current_task]);
+
+int temp,biggest=0,biggestnumber,i;
+for( i=0;i<task_number;i++){
+temp=*(usertasks[i]+19);
+if(temp>=biggest){biggest=temp;biggestnumber=i;}
+}
+print_tick(*SYSTICK_VAL);
+usertasks[biggestnumber] = activate(usertasks[biggestnumber]);
+		print_tick(*SYSTICK_VAL);
 		print_str("OS: Back to OS\n");
 
-		current_task = current_task == (task_count - 1) ? 0 : current_task + 1;
+		//current_task = current_task == (task_count - 1) ? 0 : current_task + 1;
 	}
 
 	return 0;
+}
+
+void print_tick(int number)
+{
+        int i = 0, j, Tick_NOW = number ;
+        char buf[16], str[16] = "tick=0\n";
+        if (Tick_NOW != 0)
+        {
+                while (Tick_NOW != 0)
+                {
+                        buf[i++] = (char)((Tick_NOW % 10) + '0');
+                        Tick_NOW /= 10;
+                }
+                for (j = 0; j < i; j++)
+                {
+                        str[j + 5] = buf[i - 1 - j];
+                }
+                str[j + 5] = '\n';
+                str[j + 6] = 0;
+        }
+        print_str(str);
 }
